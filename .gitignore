@@ -6,3 +6,6 @@ build/
 *.ttf
 *.bmp
 *.sleepy
+.gitattributes
+*.db
+battle-sim/
