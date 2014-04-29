@@ -35,8 +35,7 @@ LogView::LogView(SDL_Rect dispArea)
     maxLines_{textArea_.h / lineHeight_},
     msgs_{},
     beginMsg_{0},
-    endMsg_{0},
-    isDirty_{true}
+    endMsg_{0}
 {
     // Allow space for the scroll buttons.
     textArea_.w -= btnUp_->w;
@@ -58,7 +57,6 @@ void LogView::add(std::string msg)
     m.lines = sdlWordWrap(font_, m.msg, textArea_.w).size();
     msgs_.emplace_back(std::move(m));
     scrollToEnd();
-    isDirty_ = true;
 }
 
 void LogView::addBlankLine()
@@ -68,10 +66,6 @@ void LogView::addBlankLine()
 
 void LogView::draw()
 {
-    if (!isDirty_) {
-        return;
-    }
-
     sdlClear(displayArea_);
     drawButtons();
 
@@ -82,8 +76,6 @@ void LogView::draw()
         drawTarget.y += msgs_[i].lines * lineHeight_;
         drawTarget.h -= msgs_[i].lines * lineHeight_;
     }
-
-    isDirty_ = false;
 }
 
 void LogView::handleMouseDown(const SDL_MouseButtonEvent &event)
@@ -92,13 +84,11 @@ void LogView::handleMouseDown(const SDL_MouseButtonEvent &event)
         upState_ == ButtonState::READY)
     {
         upState_ = ButtonState::PRESSED;
-        isDirty_ = true;
     }
     else if (insideRect(event.x, event.y, btnDownArea_) &&
              downState_ == ButtonState::READY)
     {
         downState_ = ButtonState::PRESSED;
-        isDirty_ = true;
     }
 }
 
@@ -108,13 +98,11 @@ void LogView::handleMouseUp(const SDL_MouseButtonEvent &event)
         --beginMsg_;
         updateMsgLimits();
         updateButtonState();
-        isDirty_ = true;
     }
     else if (downState_ == ButtonState::PRESSED) {
         ++beginMsg_;
         updateMsgLimits();
         updateButtonState();
-        isDirty_ = true;
     }
 }
 
@@ -131,7 +119,6 @@ void LogView::scrollToEnd()
         numLines += msgs_[beginMsg_].lines;
     }
 
-    isDirty_ = true;
     updateButtonState();
 }
 

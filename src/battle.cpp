@@ -33,13 +33,12 @@
 #include <algorithm>
 #include <cstdlib>
 #include <deque>
+#include <initializer_list>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-// TODO: leave space to write unit stats for the highlighted hex
 
 namespace
 {
@@ -49,13 +48,14 @@ namespace
     std::unique_ptr<LogView> logv;
     Uint16 winWidth = 698;
     Uint16 winHeight = 425;
+    SDL_Rect mainWindow = {0, 0, winWidth, winHeight};
     SDL_Rect cmdrWindow1 = {0, 0, 200, 230};
     SDL_Rect cmdrWindow2 = {498, 0, 200, 230};
-    SDL_Rect borders[] = {{200, 0, 5, winHeight},  // left side vertical
-                          {493, 0, 5, winHeight},  // right side vertical
-                          {203, 360, 292, 5},  // above log window
-                          {0, 230, 202, 5},  // beneath cmdr1
-                          {496, 230, 200, 5}};  // beneath cmdr2
+    SDL_Rect mainBorders[] = {{200, 0, 5, winHeight},  // left side vertical
+                              {493, 0, 5, winHeight},  // right side vertical
+                              {203, 360, 292, 5},  // above log window
+                              {0, 230, 202, 5},  // beneath cmdr1
+                              {496, 230, 200, 5}};  // beneath cmdr2
     SDL_Rect bfWindow = {205, 0, 288, 360};
     SDL_Rect unitWindow1 = {0, 235, 200, pHexSize + 60};
     SDL_Rect unitWindow2 = {498, 235, 200, pHexSize + 60};
@@ -70,6 +70,8 @@ namespace
     enum class AiState {IDLE, RUNNING, COMPLETE};
     AiState aiState = AiState::IDLE;
     boost::future<Action> aiAction;
+    SdlSurface unitPopup;
+    SDL_Rect popupWindow;
 
     // Unit placement on the grid.
     // team 1 on the left, team 2 on the right
@@ -380,6 +382,64 @@ bool isHumanTurn()
     //return true;
 }
 
+SDL_Rect getBorderFgLine(const SDL_Rect &border)
+{
+    auto line = border;
+    if (border.h > border.w) {
+        line.x += border.w / 2;
+        line.w = 1;
+    }
+    else {
+        line.y += border.h / 2;
+        line.h = 1;
+    }
+    return line;
+}
+
+void drawBorders()
+{
+    auto screen = SDL_GetVideoSurface();
+    auto bgColor = SDL_MapRGB(screen->format, BORDER_BG.r, BORDER_BG.g,
+                               BORDER_BG.b);
+    auto fgColor = SDL_MapRGB(screen->format, BORDER_FG.r, BORDER_FG.g,
+                               BORDER_FG.b);
+
+    for (auto b : mainBorders) {
+        SDL_FillRect(screen, &b, bgColor);
+        SDL_Rect line = getBorderFgLine(b);
+        SDL_FillRect(screen, &line, fgColor);
+    }
+}
+
+void drawUnitDetails()
+{
+    sdlClear(unitWindow1);
+    sdlClear(unitWindow2);
+
+    auto unitDisplay = renderUnitView(gs->getActiveUnit());
+    if (!unitDisplay) return;
+
+    if (gs->getActiveTeam() == 0) {
+        sdlBlit(unitDisplay, unitWindow1.x, unitWindow1.y);
+    }
+    else {
+        sdlBlit(unitDisplay, unitWindow2.x, unitWindow2.y);
+    }
+
+    if (unitPopup) {
+        sdlClear(popupWindow);
+        auto border = sdlRenderBorder(popupWindow.w, popupWindow.h);
+        sdlBlit(border, popupWindow.x, popupWindow.y);
+        sdlBlit(unitPopup, popupWindow.x + 5, popupWindow.y + 5);
+    }
+}
+
+void hideUnitPopup()
+{
+    unitPopup.reset();
+    popupWindow = {0};
+}
+
 void handleMouseMotion(const SDL_MouseMotionEvent &event)
 {
     if (!insideRect(event.x, event.y, bfWindow) ||
@@ -432,6 +492,19 @@ void handleMouseDown(const SDL_MouseButtonEvent &event)
         logv->handleMouseDown(event);
         logHasFocus = true;
     }
+    else if (event.button == SDL_BUTTON_RIGHT &&
+             insideRect(event.x, event.y, bfWindow))
+    {
+        auto aIndex = bf->aryFromPixel(event.x, event.y);
+        const auto &selectedUnit = gs->getUnitAt(aIndex);
+        if (selectedUnit.isAlive()) {
+            unitPopup = renderUnitView(selectedUnit);
+            popupWindow.x = event.x;
+            popupWindow.y = event.y;
+            popupWindow.w = unitPopup->w + 15;  // leave space for borders
+            popupWindow.h = unitPopup->h + 15;
+        }
+    }
 }
 
 void handleMouseUp(const SDL_MouseButtonEvent &event)
@@ -451,6 +524,8 @@ void handleMouseUp(const SDL_MouseButtonEvent &event)
             actionTaken = true;
         }
     }
+
+    hideUnitPopup();
 }
 
 void handleKeyPress(const SDL_KeyboardEvent &event)
@@ -492,7 +567,7 @@ bool parseUnits(const rapidjson::Document &doc)
 int createUnitLabel(int num, int team, Point hex)
 {
     auto &labelFont = sdlGetFont(FontType::SMALL);
-    auto txt = sdlPreRender(labelFont, num, getLabelColor(team));
+    auto txt = sdlRenderText(labelFont, num, getLabelColor(team));
     auto id = bf->addEntity(std::move(hex), txt, ZOrder::CREATURE);
     auto &label = bf->getEntity(id);
     label.alignBottomCenter();
@@ -587,35 +662,6 @@ const char * getScenario(int argc, char *argv[])
     return argv[1];
 }
 
-SDL_Rect getBorderFgLine(const SDL_Rect &border)
-{
-    auto line = border;
-    if (border.h > border.w) {
-        line.x += border.w / 2;
-        line.w = 1;
-    }
-    else {
-        line.y += border.h / 2;
-        line.h = 1;
-    }
-    return line;
-}
-
-void drawBorders()
-{
-    auto screen = SDL_GetVideoSurface();
-    auto bgColor = SDL_MapRGB(screen->format, BORDER_BG.r, BORDER_BG.g,
-                               BORDER_BG.b);
-    auto fgColor = SDL_MapRGB(screen->format, BORDER_FG.r, BORDER_FG.g,
-                               BORDER_FG.b);
-
-    for (auto &b : borders) {
-        SDL_FillRect(screen, &b, bgColor);
-        SDL_Rect line = getBorderFgLine(b);
-        SDL_FillRect(screen, &line, fgColor);
-    }
-}
-
 bool checkWinner(int score1, int score2)
 {
     if (score1 == 0 && score2 == 0) {
@@ -697,9 +743,14 @@ extern "C" int SDL_main(int argc, char *argv[])
     initBattleGrid();
     bf = make_unique<Battlefield>(bfWindow, *grid);
     Anim::setBattlefield(*bf);
+    atexit([] {bf.reset();});
 
     gs = make_unique<GameState>(*grid);
     gs->setExecFunc(execAnimate);
+    atexit([] {gs.reset();});
+
+    // Note: atexits ensure SDL resources are cleaned up before the subsystems
+    // are torn down.
 
     if (!initEffectCache("effects.json")) {
         std::cerr << "Warning: no effect definitions loaded" << std::endl;
@@ -728,8 +779,6 @@ extern "C" int SDL_main(int argc, char *argv[])
     logv = make_unique<LogView>(logWindow);
     CommanderView cView1{cmdrWindow1, 0, *gs};
     CommanderView cView2{cmdrWindow2, 1, *gs};
-    UnitView uView1{unitWindow1, 0, *gs};
-    UnitView uView2{unitWindow2, 1, *gs};
 
     nextTurn();
     bf->selectHex(gs->getActiveUnit().aHex);
@@ -738,8 +787,7 @@ extern "C" int SDL_main(int argc, char *argv[])
     logv->draw();
     cView1.draw();
     cView2.draw();
-    uView1.draw();
-    uView2.draw();
+    drawUnitDetails();
     drawBorders();
 
     auto screen = SDL_GetVideoSurface();
@@ -763,9 +811,11 @@ extern "C" int SDL_main(int argc, char *argv[])
             }
             else if (event.type == SDL_MOUSEBUTTONDOWN) {
                 handleMouseDown(event.button);
+                needRedraw = true;
             }
             else if (event.type == SDL_MOUSEBUTTONUP) {
                 handleMouseUp(event.button);
+                needRedraw = true;
             }
             else if (event.type == SDL_KEYUP) {
                 handleKeyPress(event.key);
@@ -797,23 +847,24 @@ extern "C" int SDL_main(int argc, char *argv[])
         }
 
         if (needRedraw) {
+            sdlClear(mainWindow);
             bf->draw();
             logv->draw();
+            drawBorders();
+            cView1.draw();
+            cView2.draw();
             if (anims.empty()) {
-                cView1.draw();
-                cView2.draw();
-                uView1.draw();
-                uView2.draw();
+                drawUnitDetails();
+            }
+            else {
+                hideUnitPopup();
             }
             SDL_UpdateRect(screen, 0, 0, 0, 0);
+            needRedraw = false;
         }
 
         SDL_Delay(1);
     }
 
-    // Ensure SDL resources are cleaned up before the subsystems are torn down.
-    // TODO: can we encapsulate these so this isn't necessary?
-    gs.reset();
-    bf.reset();
     return EXIT_SUCCESS;
 }
